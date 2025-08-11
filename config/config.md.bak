@@ -112,7 +112,7 @@ ADMIN_ALERT_CHAT_ID=123456789
 ## Security Configuration
 ```
 # Encryption Key for Credentials (Fernet)
-ENCRYPTION_KEY=0idm2bw3tJmeEEOGSB8jw3xuL8mgT8DIiue7fpBZd0o=
+ENCRYPTION_KEY=your-fernet-encryption-key-here-32-bytes-base64-encoded
 
 # Rate Limiting
 RATE_LIMIT_REQUESTS_PER_MINUTE=30

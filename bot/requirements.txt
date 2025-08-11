@@ -12,14 +12,14 @@ redis==5.0.1
 aioredis==2.0.1
 
 # Cryptography and Security
-cryptography==41.0.8
+cryptography==45.0.6
 bcrypt==4.1.2
 pyjwt==2.8.0
 
 # Payment Integrations
 # TON - Using more stable versions
-pytoniq==0.1.38
-pytoniq-core==0.1.34
+# pytoniq==0.1.38
+# pytoniq-core==0.1.44
 
 # HTTP Client
 httpx==0.26.0
