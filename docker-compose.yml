@@ -1,0 +1,207 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: turbo_ping_db
+    environment:
+      POSTGRES_DB: turbo_ping_db
+      POSTGRES_USER: turbo_ping_user
+      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - turbo_ping_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turbo_ping_user -d turbo_ping_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for caching and session storage
+  redis:
+    image: redis:7-alpine
+    container_name: turbo_ping_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - turbo_ping_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Telegram Bot Service
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    container_name: turbo_ping_bot
+    environment:
+      - DB_URL=postgresql://turbo_ping_user:secure_password_123@db:5432/turbo_ping_db
+      - REDIS_URL=redis://redis:6379/0
+      - CONFIG_PATH=/app/config/config.md
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - turbo_ping_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Admin Panel Service
+  admin:
+    build:
+      context: .
+      dockerfile: admin/Dockerfile
+    container_name: turbo_ping_admin
+    environment:
+      - DB_URL=postgresql://turbo_ping_user:secure_password_123@db:5432/turbo_ping_db
+      - REDIS_URL=redis://redis:6379/1
+      - CONFIG_PATH=/app/config/config.md
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - turbo_ping_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Observer Service
+  observer:
+    build:
+      context: .
+      dockerfile: observer/Dockerfile
+    container_name: turbo_ping_observer
+    environment:
+      - DB_URL=postgresql://turbo_ping_user:secure_password_123@db:5432/turbo_ping_db
+      - REDIS_URL=redis://redis:6379/2
+      - CONFIG_PATH=/app/config/config.md
+    volumes:
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bot:
+        condition: service_healthy
+    networks:
+      - turbo_ping_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import psutil; exit(0 if any('observer' in p.name() for p in psutil.process_iter()) else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: turbo_ping_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - admin
+    networks:
+      - turbo_ping_network
+    restart: unless-stopped
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  turbo_ping_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Development override
+# Use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+---
+# docker-compose.dev.yml content for development
+version: '3.8'
+
+services:
+  db:
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: turbo_ping_dev_db
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  bot:
+    environment:
+      - DEBUG_MODE=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./bot:/app/bot:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    command: ["python", "-m", "bot.main", "--reload"]
+
+  admin:
+    environment:
+      - DEBUG_MODE=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./admin:/app/admin:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    command: ["uvicorn", "admin.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  observer:
+    environment:
+      - DEBUG_MODE=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - ./observer:/app/observer:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
